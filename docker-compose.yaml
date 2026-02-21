@@ -49,6 +49,29 @@ services:
       timeout: 5s
       retries: 5
 
+  worker:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    entrypoint: []
+    command: ["php", "artisan", "queue:work", "database", "--sleep=3", "--tries=3", "--verbose"]
+    restart: always
+    volumes:
+      - .:/var/www/html
+      - /var/www/html/vendor
+      - ./storage:/var/www/html/storage
+      - ./bootstrap/cache:/var/www/html/bootstrap/cache
+    working_dir: /var/www/html
+    env_file:
+      - .env
+    depends_on:
+      laravel:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+    networks:
+      - donatix_net
+
 networks:
   donatix_net:
 

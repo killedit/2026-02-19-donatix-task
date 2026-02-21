@@ -18,8 +18,8 @@ WORKDIR /var/www/html
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# COPY ./composer.json composer.json
-# COPY ./composer.lock composer.lock
+COPY ./composer.json composer.json
+COPY ./composer.lock composer.lock
 
 COPY . /var/www/html/
 
