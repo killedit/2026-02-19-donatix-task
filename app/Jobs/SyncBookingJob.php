@@ -3,14 +3,15 @@
 namespace App\Jobs;
 
 use App\Models\Booking;
+use App\Models\Guest;
 use App\Models\Room;
 use App\Models\RoomType;
-use App\Models\Guest;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -19,7 +20,9 @@ class SyncBookingJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $bookingId;
+
     public $timeout = 120;
+
     public $tries = 3;
 
     public function __construct(int $bookingId)
@@ -34,62 +37,66 @@ class SyncBookingJob implements ShouldQueue
         $existingBooking = Booking::where('external_id', $this->bookingId)->first();
         if ($existingBooking) {
             Log::info("Booking {$this->bookingId} already exists. Skipping.");
+
             return;
         }
 
         $response = Http::timeout(10)->get(
-            config('services.donatix.url') . "/api/bookings/{$this->bookingId}"
+            config('services.donatix.url')."/api/bookings/{$this->bookingId}"
         );
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             Log::warning("Failed to fetch booking {$this->bookingId}");
+
             return;
         }
 
         $data = $response->json();
 
         $roomType = $this->ensureRoomTypeExists($data['room_type_id']);
-        if (!$roomType) {
+        if (! $roomType) {
             Log::warning("Skipping booking {$this->bookingId} — missing room type.");
+
             return;
         }
 
         $room = $this->ensureRoomExists($data['room_id'], $roomType);
-        if (!$room) {
+        if (! $room) {
             Log::warning("Skipping booking {$this->bookingId} — missing room.");
+
             return;
         }
 
-        $booking = Booking::create([
-            'external_id'    => $data['id'],
-            'arrival_date'   => $data['arrival_date'],
-            'departure_date' => $data['departure_date'],
-            'room_id'        => $room->id,
-            'room_type_id'   => $roomType->id,
-            'status'         => $data['status'],
-            'notes'          => $data['notes'],
-        ]);
+        DB::transaction(function () use ($data, $room, $roomType) {
+            $booking = Booking::create([
+                'external_id' => $data['id'],
+                'arrival_date' => $data['arrival_date'],
+                'departure_date' => $data['departure_date'],
+                'room_id' => $room->id,
+                'room_type_id' => $roomType->id,
+                'status' => $data['status'],
+                'notes' => $data['notes'],
+            ]);
 
-        Log::info("Created booking {$booking->external_id}");
+            Log::info("Created booking {$booking->external_id}");
 
-        if (!empty($data['guest_ids'])) {
+            if (! empty($data['guest_ids'])) {
+                $validGuestIds = [];
 
-            $validGuestIds = [];
+                foreach ($data['guest_ids'] as $externalGuestId) {
+                    $guest = $this->ensureGuestExists($externalGuestId);
 
-            foreach ($data['guest_ids'] as $externalGuestId) {
+                    if ($guest && $guest->id) {
+                        $validGuestIds[] = $guest->id;
+                    }
+                }
 
-                $guest = $this->ensureGuestExists($externalGuestId);
-
-                if ($guest && $guest->id) {
-                    $validGuestIds[] = $guest->id;
+                if (! empty($validGuestIds)) {
+                    $booking->guests()->sync($validGuestIds);
+                    Log::info("Synced guests for booking {$booking->external_id}");
                 }
             }
-
-            if (!empty($validGuestIds)) {
-                $booking->guests()->sync($validGuestIds);
-                Log::info("Synced guests for booking {$booking->external_id}");
-            }
-        }
+        });
 
         Log::info("Finished booking {$this->bookingId}");
     }
@@ -102,12 +109,13 @@ class SyncBookingJob implements ShouldQueue
         $roomType = RoomType::where('external_id', $apiId)->first();
         if ($roomType) {
             Log::info("RoomType {$apiId} loaded from DB.");
+
             return $roomType;
         }
 
-        $response = Http::get(config('services.donatix.url') . "/api/room-types/{$apiId}");
+        $response = Http::get(config('services.donatix.url')."/api/room-types/{$apiId}");
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             return null;
         }
 
@@ -115,8 +123,8 @@ class SyncBookingJob implements ShouldQueue
 
         return RoomType::create([
             'external_id' => $apiId,
-            'name'        => $data['name'],
-            'description' => $data['description']
+            'name' => $data['name'],
+            'description' => $data['description'],
         ]);
     }
 
@@ -125,12 +133,13 @@ class SyncBookingJob implements ShouldQueue
         $room = Room::where('external_id', $apiId)->first();
         if ($room) {
             Log::info("Room {$apiId} loaded from DB.");
+
             return $room;
         }
 
-        $response = Http::get(config('services.donatix.url') . "/api/rooms/{$apiId}");
+        $response = Http::get(config('services.donatix.url')."/api/rooms/{$apiId}");
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             return null;
         }
 
@@ -138,9 +147,9 @@ class SyncBookingJob implements ShouldQueue
 
         return Room::create([
             'external_id' => $apiId,
-            'number'      => $data['number'],
-            'floor'       => $data['floor'] ?? 0,
-            'room_type_id'=> $roomType->id,
+            'number' => $data['number'],
+            'floor' => $data['floor'] ?? 0,
+            'room_type_id' => $roomType->id,
         ]);
     }
 
@@ -149,12 +158,13 @@ class SyncBookingJob implements ShouldQueue
         $guest = Guest::where('external_id', $apiId)->first();
         if ($guest) {
             Log::info("Guest {$apiId} loaded from DB.");
+
             return $guest;
         }
 
-        $response = Http::get(config('services.donatix.url') . "/api/guests/{$apiId}");
+        $response = Http::get(config('services.donatix.url')."/api/guests/{$apiId}");
 
-        if (!$response->successful()) {
+        if (! $response->successful()) {
             return null;
         }
 
@@ -162,9 +172,9 @@ class SyncBookingJob implements ShouldQueue
 
         return Guest::create([
             'external_id' => $apiId,
-            'first_name'  => $data['first_name'] ?? $data['name'] ?? 'Guest',
-            'last_name'   => $data['last_name'] ?? '',
-            'email'       => $data['email'] ?? null,
+            'first_name' => $data['first_name'] ?? $data['name'] ?? 'Guest',
+            'last_name' => $data['last_name'] ?? '',
+            'email' => $data['email'] ?? null,
         ]);
     }
 }

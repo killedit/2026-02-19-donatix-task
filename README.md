@@ -5,7 +5,15 @@ Should run on any machine 🐋
 
 `http://localhost:8010/`
 
-`docker compose exec laravel php artisan app:sync-bookings`
+```bash
+docker compose exec laravel php artisan app:sync-bookings
+```
 
 ![Parser](/resources/images/2026-02-19-donatix-task-parser.png)
 ![Parser](/resources/images/2026-02-19-donatix-task-db.png)
+
+## Unit tests
+
+```bash
+php artisan test tests/Unit/SyncBookingJobTest.php
+```
